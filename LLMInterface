@@ -1,0 +1,55 @@
+from google import genai
+from google.genai import types
+import os
+import prompts
+import json
+
+
+class LLMInterface:
+    def add_message(self, role: str, content: str):
+        raise NotImplementedError
+    def get_response(self, message: str) -> str:
+        raise NotImplementedError
+
+class GoogleLLM(LLMInterface):
+    def __init__(self):
+        self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        self.messages = []
+
+    def consider_message(self, user: str, content: str):
+        decision = self.evaluate_response_with_llm(user, content)
+        if decision.get("should_reply"):
+            return self.get_response()
+        return None
+        
+
+
+    def add_message(self, role: str,user:str, content: str):
+        self.messages.append({"role": role,"user": user,"content": content})
+
+    def get_response(self) -> str:        
+        response = self.client.models.generate_content(
+            model="gemini-2.5-flash",
+            config=types.GenerateContentConfig(
+                system_instruction=f"You are in a group conversation and it's your turn to respond. {prompts.RESPONDER_SYSTEM}",
+            ),
+            contents=str.join(",\n", self.messages)
+        )
+        self.add_message("model", "model", response.text)
+
+    def evaluate_response_with_llm(self, user: str, message: str) -> dict:
+        self.add_message("user",user, message)
+        response = self.client.models.generate_message(
+            model="gemini-2.5-flash",
+            config=types.GenerateContentConfig(
+                system_instruction=prompts.DECIDER_SYSTEM,
+            ),
+            contents=str.join(",\n", self.messages)
+        )
+        self.add_message("model", "model", response.text)
+        try:
+            decision = json.loads(response.text)
+        except json.JSONDecodeError:
+            print(f"[google] Bad decision JSON: {response.text}")
+            return {"should_reply": False, "reason": "JSON decode error"}
+        return decision
